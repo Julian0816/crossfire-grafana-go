@@ -117,6 +117,66 @@ func fetchDocumentsFromFirestoreWithSubcollection(projectID, databaseID, subColl
     return documents, nil
 }
 
+func fetchSpecificDocumentsFromFirestore(projectID, databaseID, parentCollection, subCollection string) ([]map[string]interface{}, error) {
+	url := fmt.Sprintf(
+		"https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents:runQuery",
+		projectID, databaseID,
+	)
+
+	payload := fmt.Sprintf(`{
+		"structuredQuery": {
+			"from": [{"collectionId": "%s", "allDescendants": true}]
+		}
+	}`, subCollection)
+
+	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	token, err := getFirestoreAccessToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get access token: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Firestore API returned error: %s", resp.Status)
+	}
+
+	var result []struct {
+		Document struct {
+			Name   string                 `json:"name"`
+			Fields map[string]interface{} `json:"fields"`
+		} `json:"document"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %v", err)
+	}
+
+	// Extract and return data
+	var documents []map[string]interface{}
+	for _, res := range result {
+		if res.Document.Fields != nil {
+			documents = append(documents, map[string]interface{}{
+				"name":        res.Document.Name,
+				"fields":      res.Document.Fields,
+				"subCategory": subCollection, // Include subCollection for context
+			})
+		}
+	}
+
+	return documents, nil
+}
+
+
 
 // setupRouter configures the Gin router.
 func setupRouter(projectID, databaseID string) *gin.Engine {
@@ -140,26 +200,6 @@ func setupRouter(projectID, databaseID string) *gin.Engine {
 			"documents": documents,
 		})
 	})
-
-	// Fetch from the "latest-orders" collection
-// 	router.GET("/latest-orders", func(c *gin.Context) {
-//     subCollectionID := c.Query("subCollection") // Get subcollection ID from query params (e.g., ?subCollection=I001)
-//     if subCollectionID == "" {
-//         c.JSON(400, gin.H{"error": "subCollection query parameter is required"})
-//         return
-//     }
-
-//     documents, err := fetchDocumentsFromFirestoreWithSubcollection(projectID, databaseID, subCollectionID)
-//     if err != nil {
-//         c.JSON(500, gin.H{"error": err.Error()})
-//         return
-//     }
-
-//     c.JSON(200, gin.H{
-//         "message":  "Documents fetched successfully",
-//         "documents": documents,
-//     })
-//    })
 
 // Fetch from the "latest-orders" collection
 router.GET("/latest-orders", func(c *gin.Context) {
@@ -201,60 +241,27 @@ router.GET("/latest-orders", func(c *gin.Context) {
 
 
 	// Fetch from the "dead-letters" collection
-	router.GET("/dead-letters", func(c *gin.Context) {
-    subCollectionID := "NANALL" // Fixed for NANALL
-    documents := []FirestoreDocument{} // To store all documents
+	router.GET("/dead-letters-specific", func(c *gin.Context) {
+	parentCollection := "dead-letters/NANALL"
+	subCollection := c.Query("subCollection") // Example: `2024-12-16`
 
-    // Fetch subcollection IDs under NANALL
-    url := fmt.Sprintf(
-        "https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/dead-letters/%s:listCollectionIds",
-        projectID, databaseID, subCollectionID,
-    )
+	if subCollection == "" {
+		c.JSON(400, gin.H{"error": "subCollection query parameter is required"})
+		return
+	}
 
-    req, err := http.NewRequest("POST", url, strings.NewReader(`{}`))
-    if err != nil {
-        c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to create request: %v", err)})
-        return
-    }
+	documents, err := fetchSpecificDocumentsFromFirestore(projectID, databaseID, parentCollection, subCollection)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
 
-    token, err := getFirestoreAccessToken()
-    if err != nil {
-        c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get access token: %v", err)})
-        return
-    }
-    req.Header.Set("Authorization", "Bearer "+token)
-    req.Header.Set("Content-Type", "application/json")
-
-    resp, err := http.DefaultClient.Do(req)
-    if err != nil || resp.StatusCode != http.StatusOK {
-        c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to list subcollections: %v", err)})
-        return
-    }
-    defer resp.Body.Close()
-
-    var result struct {
-        CollectionIds []string `json:"collectionIds"`
-    }
-    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-        c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to parse subcollections: %v", err)})
-        return
-    }
-
-    // Fetch documents from each subcollection
-    for _, collectionID := range result.CollectionIds {
-        subDocuments, err := fetchDocumentsFromFirestoreWithSubcollection(projectID, databaseID, collectionID)
-        if err != nil {
-            c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to fetch documents for %s: %v", collectionID, err)})
-            return
-        }
-        documents = append(documents, subDocuments...)
-    }
-
-    c.JSON(200, gin.H{
-        "message":  "Documents fetched successfully from NANALL subcollections",
-        "documents": documents,
-    })
+	c.JSON(200, gin.H{
+		"message":  "Documents fetched successfully",
+		"documents": documents,
+	})
 })
+
 
 
 
