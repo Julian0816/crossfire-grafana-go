@@ -242,25 +242,51 @@ router.GET("/latest-orders", func(c *gin.Context) {
 
 	// Fetch from the "dead-letters" collection
 	router.GET("/dead-letters-specific", func(c *gin.Context) {
-	parentCollection := "dead-letters/NANALL"
-	subCollection := c.Query("subCollection") // Example: `2024-12-16`
+    parentCollection := "dead-letters/NANALL"
+    subCollection := c.Query("subCollection") // Example: `2024-12-16`
 
-	if subCollection == "" {
-		c.JSON(400, gin.H{"error": "subCollection query parameter is required"})
-		return
-	}
+    if subCollection == "" {
+        c.JSON(400, gin.H{"error": "subCollection query parameter is required"})
+        return
+    }
 
-	documents, err := fetchSpecificDocumentsFromFirestore(projectID, databaseID, parentCollection, subCollection)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
+    documents, err := fetchSpecificDocumentsFromFirestore(projectID, databaseID, parentCollection, subCollection)
+    if err != nil {
+        c.JSON(500, gin.H{"error": err.Error()})
+        return
+    }
 
-	c.JSON(200, gin.H{
-		"message":  "Documents fetched successfully",
-		"documents": documents,
-	})
+    // Process the documents to include combined fields
+    var processedDocuments []map[string]interface{}
+    for _, doc := range documents {
+        fields := doc["fields"].(map[string]interface{})
+        originalPayload := fields["originalPayload"].(map[string]interface{})["mapValue"].(map[string]interface{})["fields"].(map[string]interface{})
+        storeOrders := originalPayload["StoreOrders"].(map[string]interface{})["arrayValue"].(map[string]interface{})["values"].([]interface{})
+
+        for _, storeOrder := range storeOrders {
+            orderFields := storeOrder.(map[string]interface{})["mapValue"].(map[string]interface{})["fields"].(map[string]interface{})
+            combinedField := fmt.Sprintf("%s - %s - %s - %s - %s",
+                originalPayload["OrderNumber"].(map[string]interface{})["stringValue"],
+                orderFields["BillTo"].(map[string]interface{})["mapValue"].(map[string]interface{})["fields"].(map[string]interface{})["State"].(map[string]interface{})["stringValue"],
+                orderFields["BillTo"].(map[string]interface{})["mapValue"].(map[string]interface{})["fields"].(map[string]interface{})["StoreCode"].(map[string]interface{})["stringValue"],
+                orderFields["BillTo"].(map[string]interface{})["mapValue"].(map[string]interface{})["fields"].(map[string]interface{})["Suburb"].(map[string]interface{})["stringValue"],
+                fields["errorMessage"].(map[string]interface{})["stringValue"],
+            )
+
+            processedDocuments = append(processedDocuments, map[string]interface{}{
+                "combinedField": combinedField,
+                "name":          doc["name"],
+                "fields":        fields,
+            })
+        }
+    }
+
+    c.JSON(200, gin.H{
+        "message":  "Documents fetched successfully",
+        "documents": processedDocuments,
+    })
 })
+
 
 
 
