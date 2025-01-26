@@ -202,6 +202,7 @@ func setupRouter(projectID, databaseID string) *gin.Engine {
 	})
 
 // Fetch from the "latest-orders" collection
+// Fetch from the "latest-orders" collection
 router.GET("/latest-orders", func(c *gin.Context) {
     subCollectionID := c.Query("subCollection") // Get subcollection ID from query params (e.g., ?subCollection=I001)
     if subCollectionID == "" {
@@ -218,12 +219,22 @@ router.GET("/latest-orders", func(c *gin.Context) {
     // Process the documents to include combined fields
     var processedDocuments []map[string]interface{}
     for _, doc := range documents {
-        combinedField := ""
-        if orderNumberField, ok := doc.Fields["orderNumber"]; ok {
-            if orderNumberValue, ok := orderNumberField.(map[string]interface{})["stringValue"]; ok {
-                combinedField = fmt.Sprintf("%s - %s", orderNumberValue, subCollectionID)
-            }
+        fields := doc.Fields
+
+        // Extract fields for combinedField
+        var orderNumber, createdAt, datePosted string
+        if orderNumberField, ok := fields["orderNumber"]; ok {
+            orderNumber = orderNumberField.(map[string]interface{})["stringValue"].(string)
         }
+        if createdAtField, ok := fields["createdAt"]; ok {
+            createdAt = createdAtField.(map[string]interface{})["stringValue"].(string)
+        }
+        if datePostedField, ok := fields["datePosted"]; ok {
+            datePosted = datePostedField.(map[string]interface{})["stringValue"].(string)
+        }
+
+        // Combine fields into a single string
+        combinedField := fmt.Sprintf("%s - %s - %s - %s", subCollectionID, orderNumber, createdAt, datePosted)
 
         processedDocuments = append(processedDocuments, map[string]interface{}{
             "name":          doc.Name,
@@ -237,6 +248,7 @@ router.GET("/latest-orders", func(c *gin.Context) {
         "documents": processedDocuments,
     })
 })
+
 
 
 
@@ -295,7 +307,7 @@ router.GET("/latest-orders", func(c *gin.Context) {
 }
 
 func main() {
-	projectID := "preview-supply-chain-f84d81be"
+	projectID := "prod-supply-chain-0b4688d1"
 	databaseID := "crossfire-edi-db"
 
 	// Set up the HTTP server
