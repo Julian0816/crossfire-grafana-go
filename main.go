@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2/google"
@@ -34,35 +35,29 @@ func getFirestoreAccessToken() (string, error) {
 
 // fetchDocumentsFromFirestore queries the Firestore database using the REST API.
 func fetchDocumentsFromFirestore(projectID, databaseID, collection string) ([]FirestoreDocument, error) {
-	// Construct the URL for the Firestore REST API
 	url := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s", projectID, databaseID, collection)
 
-	// Get the OAuth2 token
 	token, err := getFirestoreAccessToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get access token: %v", err)
 	}
 
-	// Create the HTTP request
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	// Send the HTTP request
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Firestore API returned error: %s", resp.Status)
+		return nil, fmt.Errorf("firestore API returned error: %s", resp.Status)
 	}
 
-	// Decode the response
 	var result struct {
 		Documents []FirestoreDocument `json:"documents"`
 	}
@@ -73,49 +68,205 @@ func fetchDocumentsFromFirestore(projectID, databaseID, collection string) ([]Fi
 	return result.Documents, nil
 }
 
+func fetchDocumentsFromFirestoreWithSubcollection(projectID, databaseID, subCollection string) ([]FirestoreDocument, error) {
+    url := fmt.Sprintf(
+        "https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents:runQuery",
+        projectID, databaseID,
+    )
+
+    payload := fmt.Sprintf(`{
+        "structuredQuery": {
+            "from": [{"collectionId": "%s", "allDescendants": true}]
+        }
+    }`, subCollection)
+
+    req, err := http.NewRequest("POST", url, strings.NewReader(payload))
+    if err != nil {
+        return nil, fmt.Errorf("failed to create request: %v", err)
+    }
+
+    token, err := getFirestoreAccessToken()
+    if err != nil {
+        return nil, fmt.Errorf("failed to get access token: %v", err)
+    }
+    req.Header.Set("Authorization", "Bearer "+token)
+    req.Header.Set("Content-Type", "application/json")
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return nil, fmt.Errorf("failed to make request: %v", err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("Firestore API returned error: %s", resp.Status)
+    }
+
+    var result []struct {
+        Document FirestoreDocument `json:"document"`
+    }
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        return nil, fmt.Errorf("failed to parse response: %v", err)
+    }
+
+    var documents []FirestoreDocument
+    for _, res := range result {
+        documents = append(documents, res.Document)
+    }
+
+    return documents, nil
+}
+
+
 // setupRouter configures the Gin router.
-func setupRouter(projectID, databaseID, collection string) *gin.Engine {
+func setupRouter(projectID, databaseID string) *gin.Engine {
 	router := gin.Default()
 
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "Server is running"})
 	})
 
+	// Fetch from the "restaurants" collection
 	router.GET("/restaurants-cache", func(c *gin.Context) {
-		documents, err := fetchDocumentsFromFirestore(projectID, databaseID, collection)
+		restaurantsCollection := "restaurants"
+
+		documents, err := fetchDocumentsFromFirestore(projectID, databaseID, restaurantsCollection)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(200, gin.H{
-			"message":  "Documents fetched successfully",
+			"message":  "Documents fetched successfully from restaurants",
 			"documents": documents,
 		})
 	})
 
-	router.GET("/latest-orders", func(c *gin.Context) {
-		documents, err := fetchDocumentsFromFirestore(projectID, databaseID, collection)
-		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(200, gin.H{
-			"message":  "Documents fetched successfully",
-			"documents": documents,
-		})
-	})
+	// Fetch from the "latest-orders" collection
+// 	router.GET("/latest-orders", func(c *gin.Context) {
+//     subCollectionID := c.Query("subCollection") // Get subcollection ID from query params (e.g., ?subCollection=I001)
+//     if subCollectionID == "" {
+//         c.JSON(400, gin.H{"error": "subCollection query parameter is required"})
+//         return
+//     }
+
+//     documents, err := fetchDocumentsFromFirestoreWithSubcollection(projectID, databaseID, subCollectionID)
+//     if err != nil {
+//         c.JSON(500, gin.H{"error": err.Error()})
+//         return
+//     }
+
+//     c.JSON(200, gin.H{
+//         "message":  "Documents fetched successfully",
+//         "documents": documents,
+//     })
+//    })
+
+// Fetch from the "latest-orders" collection
+router.GET("/latest-orders", func(c *gin.Context) {
+    subCollectionID := c.Query("subCollection") // Get subcollection ID from query params (e.g., ?subCollection=I001)
+    if subCollectionID == "" {
+        c.JSON(400, gin.H{"error": "subCollection query parameter is required"})
+        return
+    }
+
+    documents, err := fetchDocumentsFromFirestoreWithSubcollection(projectID, databaseID, subCollectionID)
+    if err != nil {
+        c.JSON(500, gin.H{"error": err.Error()})
+        return
+    }
+
+    // Process the documents to include combined fields
+    var processedDocuments []map[string]interface{}
+    for _, doc := range documents {
+        combinedField := ""
+        if orderNumberField, ok := doc.Fields["orderNumber"]; ok {
+            if orderNumberValue, ok := orderNumberField.(map[string]interface{})["stringValue"]; ok {
+                combinedField = fmt.Sprintf("%s - %s", orderNumberValue, subCollectionID)
+            }
+        }
+
+        processedDocuments = append(processedDocuments, map[string]interface{}{
+            "name":          doc.Name,
+            "fields":        doc.Fields,
+            "combinedField": combinedField,
+        })
+    }
+
+    c.JSON(200, gin.H{
+        "message":  "Documents fetched successfully",
+        "documents": processedDocuments,
+    })
+})
+
+
+
+	// Fetch from the "dead-letters" collection
+	router.GET("/dead-letters", func(c *gin.Context) {
+    subCollectionID := "NANALL" // Fixed for NANALL
+    documents := []FirestoreDocument{} // To store all documents
+
+    // Fetch subcollection IDs under NANALL
+    url := fmt.Sprintf(
+        "https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/dead-letters/%s:listCollectionIds",
+        projectID, databaseID, subCollectionID,
+    )
+
+    req, err := http.NewRequest("POST", url, strings.NewReader(`{}`))
+    if err != nil {
+        c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to create request: %v", err)})
+        return
+    }
+
+    token, err := getFirestoreAccessToken()
+    if err != nil {
+        c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get access token: %v", err)})
+        return
+    }
+    req.Header.Set("Authorization", "Bearer "+token)
+    req.Header.Set("Content-Type", "application/json")
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil || resp.StatusCode != http.StatusOK {
+        c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to list subcollections: %v", err)})
+        return
+    }
+    defer resp.Body.Close()
+
+    var result struct {
+        CollectionIds []string `json:"collectionIds"`
+    }
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to parse subcollections: %v", err)})
+        return
+    }
+
+    // Fetch documents from each subcollection
+    for _, collectionID := range result.CollectionIds {
+        subDocuments, err := fetchDocumentsFromFirestoreWithSubcollection(projectID, databaseID, collectionID)
+        if err != nil {
+            c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to fetch documents for %s: %v", collectionID, err)})
+            return
+        }
+        documents = append(documents, subDocuments...)
+    }
+
+    c.JSON(200, gin.H{
+        "message":  "Documents fetched successfully from NANALL subcollections",
+        "documents": documents,
+    })
+})
+
+
 
 	return router
 }
 
 func main() {
-	// Firestore configuration
-	projectID := "prod-supply-chain-0b4688d1"
+	projectID := "preview-supply-chain-f84d81be"
 	databaseID := "crossfire-edi-db"
-	collection := "restaurants"
 
 	// Set up the HTTP server
-	router := setupRouter(projectID, databaseID, collection)
+	router := setupRouter(projectID, databaseID)
 
 	log.Println("Server is running on port 4000")
 	if err := router.Run(":4000"); err != nil {
