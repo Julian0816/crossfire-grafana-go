@@ -1,1 +1,29 @@
-crossfire-grafana-go/
+# Binaries for programs and plugins
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the `go run` command
+*.out
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+
+# Dependency directories (auto-managed by `go mod`)
+vendor/
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.*
+
+# Coverage reports
+coverage.out

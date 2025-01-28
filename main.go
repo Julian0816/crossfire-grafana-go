@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2/google"
+	"github.com/joho/godotenv"
 )
 
 // FirestoreDocument represents a Firestore document.
@@ -307,8 +309,14 @@ router.GET("/latest-orders", func(c *gin.Context) {
 }
 
 func main() {
-	projectID := "prod-supply-chain-0b4688d1"
-	databaseID := "crossfire-edi-db"
+
+	err := godotenv.Load()
+    if err != nil {
+        log.Fatalf("Error loading .env file: %v", err)
+    }
+
+	projectID := os.Getenv("PROJECT_ID")
+    databaseID := os.Getenv("DATABASE_ID")
 
 	// Set up the HTTP server
 	router := setupRouter(projectID, databaseID)
