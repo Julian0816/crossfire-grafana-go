@@ -2,7 +2,7 @@ package routes
 
 import (
 	"github.com/gin-gonic/gin"
-	"your-project/internal/handlers" // Update the import path for handlers
+	"crossfire-grafana/internal/handlers"
 )
 
 // SetupRouter configures the Gin router.
