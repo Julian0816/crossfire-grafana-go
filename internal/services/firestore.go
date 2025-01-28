@@ -31,40 +31,66 @@ func GetFirestoreAccessToken() (string, error) {
 	return token.AccessToken, nil
 }
 
-// FetchDocumentsFromFirestore queries the Firestore database using the REST API.
+
 func FetchDocumentsFromFirestore(projectID, databaseID, collection string) ([]FirestoreDocument, error) {
 	url := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s", projectID, databaseID, collection)
 
-	token, err := GetFirestoreAccessToken()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get access token: %v", err)
+	var allDocuments []FirestoreDocument
+	var nextPageToken string
+
+	for {
+		// Construct the URL with pagination if a next page token exists
+		requestURL := url
+		if nextPageToken != "" {
+			requestURL = fmt.Sprintf("%s?pageToken=%s", url, nextPageToken)
+		}
+
+		// Get Firestore access token
+		token, err := GetFirestoreAccessToken()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get access token: %v", err)
+		}
+
+		// Create the request
+		req, err := http.NewRequest("GET", requestURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		// Make the request
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to make request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("firestore API returned error: %s", resp.Status)
+		}
+
+		// Decode the response
+		var result struct {
+			Documents      []FirestoreDocument `json:"documents"`
+			NextPageToken  string              `json:"nextPageToken"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %v", err)
+		}
+
+		// Append the documents from this page
+		allDocuments = append(allDocuments, result.Documents...)
+
+		// Check if there is another page of documents
+		if result.NextPageToken == "" {
+			break
+		}
+		nextPageToken = result.NextPageToken
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("firestore API returned error: %s", resp.Status)
-	}
-
-	var result struct {
-		Documents []FirestoreDocument `json:"documents"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %v", err)
-	}
-
-	return result.Documents, nil
+	return allDocuments, nil
 }
+
 
 // FetchDocumentsFromFirestoreWithSubcollection queries a Firestore subcollection.
 func FetchDocumentsFromFirestoreWithSubcollection(projectID, databaseID, subCollection string) ([]FirestoreDocument, error) {
