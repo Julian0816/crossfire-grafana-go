@@ -75,4 +75,37 @@ Response: {"message": "Server is running"}
 ├── .env                   # Environment variables (ignored by Git)
 ├── .gitignore             # Git ignore rules
 └── go.mod                 # Go module dependencies
+  ```
 
+## Grafana Dashboard
+![Dashboard](././internal/assets/Grafana-dasboard.png)
+
+## Grafana Paths and Fields set up
+
+### Restaurants Legth
+```bash
+   GET /restaurants-cache
+   FIELD $.documents.length
+```
+![Dashboard](././internal/assets/restaurants-length.png)
+
+### Restaurants in cache
+```bash
+   GET /restaurants-cache
+   FIELDS $.documents[*].fields.details.mapValue.fields.name.mapValue.fields.value.stringValue
+```
+![Dashboard](././internal/assets/restaurants-in-cache.png)
+
+### Latest Orders
+```bash
+   GET /latest-orders?subCollection=I001
+   FIELDS $.$.documents[*].combinedField
+```
+![Dashboard](././internal/assets/latest-orders.png)
+
+### Dead Letters
+```bash
+   GET /dead-letters-specific?subCollection=2025-01-29
+   FIELDS $.documents[*].combinedField
+```
+![Dashboard](././internal/assets/dead-letters.png)
